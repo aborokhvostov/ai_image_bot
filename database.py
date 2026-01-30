@@ -1,6 +1,7 @@
 # database.py
 import asyncpg
-import os  # 🔴 ДОБАВЛЕН ИМПОРТ (была ошибка!)
+import os
+import urllib.parse
 from datetime import datetime
 
 class Database:
@@ -8,25 +9,88 @@ class Database:
         self.pool = None
     
     async def connect(self):
-        """Подключение к базе данных с проверкой переменных окружения"""
+        """Подключение к базе данных с полной диагностикой"""
         db_url = os.getenv("DATABASE_URL")
         
         if not db_url:
             raise ValueError(
-                "❌ Ошибка: переменная окружения DATABASE_URL не установлена!\n"
-                "Проверьте настройки в Railway → Variables"
+                "❌ DATABASE_URL не установлен!\n"
+                "Проверьте Variables в Railway → добавьте:\n"
+                "DATABASE_URL = postgresql://postgres:пароль@db.xxxxx.supabase.co:5432/postgres?sslmode=require"
             )
+        
+        # 🔍 Диагностика строки подключения
+        print(f"🔍 Проверка строки подключения:")
+        print(f"   Хост: {self._extract_host(db_url)}")
+        print(f"   Порт: {self._extract_port(db_url)}")
+        print(f"   SSL:  {'✅ включён' if 'sslmode=require' in db_url.lower() else '⚠️ отсутствует'}")
+        
+        # 🔧 Автоматическое добавление SSL если отсутствует
+        if 'sslmode=' not in db_url.lower():
+            if '?' in db_url:
+                db_url += '&sslmode=require'
+            else:
+                db_url += '?sslmode=require'
+            print(f"🔧 Добавлен параметр sslmode=require")
         
         try:
             self.pool = await asyncpg.create_pool(
                 db_url,
                 min_size=1,
-                max_size=10,
-                command_timeout=60
+                max_size=5,  # меньше соединений для бесплатного тарифа
+                command_timeout=60,
+                ssl='require'  # явное требование SSL
             )
             print(f"✅ Подключение к БД установлено")
         except Exception as e:
-            raise ConnectionError(f"❌ Ошибка подключения к БД: {str(e)}")
+            error_msg = str(e).lower()
+            
+            if 'network is unreachable' in error_msg or 'cannot assign requested address' in error_msg:
+                raise ConnectionError(
+                    "❌ Ошибка сети: Не удаётся подключиться к базе данных.\n"
+                    "ВОЗМОЖНЫЕ ПРИЧИНЫ:\n"
+                    "1. В Supabase не разрешены внешние подключения (0.0.0.0/0)\n"
+                    "   → Settings → Database → Network Restrictions → добавьте 0.0.0.0/0\n"
+                    "2. Неправильная строка подключения\n"
+                    "   → Проверьте хост и порт в DATABASE_URL\n"
+                    "3. Проблемы с сетью Supabase (редко)\n"
+                    "   → Попробуйте позже или создайте новый проект в другом регионе"
+                )
+            elif 'password authentication failed' in error_msg:
+                raise ConnectionError(
+                    "❌ Ошибка аутентификации: Неверный пароль или пользователь.\n"
+                    "Проверьте DATABASE_URL — пароль должен быть правильным."
+                )
+            elif 'database "postgres" does not exist' in error_msg:
+                raise ConnectionError(
+                    "❌ База данных не существует.\n"
+                    "Убедитесь, что вы скопировали строку из правильного проекта Supabase."
+                )
+            else:
+                raise ConnectionError(f"❌ Неизвестная ошибка подключения: {str(e)}")
+    
+    def _extract_host(self, url):
+        try:
+            if '://' in url:
+                url = url.split('://')[1]
+            if '@' in url:
+                url = url.split('@')[1]
+            if ':' in url.split('/')[0]:
+                return url.split(':')[0].split('/')[0]
+            return url.split('/')[0]
+        except:
+            return "неизвестно"
+    
+    def _extract_port(self, url):
+        try:
+            if ':' in url.split('@')[-1]:
+                parts = url.split('@')[-1].split(':')
+                if len(parts) > 1:
+                    port_part = parts[1].split('/')[0]
+                    return port_part
+            return "5432"
+        except:
+            return "неизвестно"
     
     async def close(self):
         """Безопасное закрытие соединения"""
@@ -83,13 +147,13 @@ class Database:
                 )
             ''')
             
-            # Индексы для ускорения запросов
+            # Индексы
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_generations_telegram_id ON generations(telegram_id)')
-            await conn.execute('CREATE INDEX IF NOT EXISTS idx_generations_created_at ON generations(created_at DESC)')
             
             print("✅ Таблицы БД проверены/созданы")
     
+    # ... остальные методы без изменений (create_user, add_credits и т.д.) ...
     async def create_user(self, telegram_id, username=None, first_name=None, last_name=None):
         async with self.pool.acquire() as conn:
             await conn.execute('''

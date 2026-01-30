@@ -147,7 +147,7 @@ async def generate_image(message: Message):
 
 async def generate_with_replicate(prompt: str) -> str:
     """ЗАГЛУШКА: возвращает тестовое изображение без вызова API"""
-    return "https://picsum.photos/1024/1024?random=1"
+    return "https://picsum.photos/1024/1024?random=15"
 
 # ===== КОМАНДА /balance =====
 @dp.message(Command("balance"))

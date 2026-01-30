@@ -1,74 +1,68 @@
-# database.py
+# database.py — ИСПРАВЛЕННАЯ ВЕРСИЯ ДЛЯ RAILWAY
 import asyncpg
 import os
-import urllib.parse
-from datetime import datetime
+from urllib.parse import urlparse
 
 class Database:
     def __init__(self):
         self.pool = None
     
     async def connect(self):
-        """Подключение к базе данных с полной диагностикой"""
+        """Подключение к базе данных с правильной обработкой хостов Railway"""
         db_url = os.getenv("DATABASE_URL")
         
         if not db_url:
-            raise ValueError(
-                "❌ DATABASE_URL не установлен!\n"
-                "Проверьте Variables в Railway → добавьте:\n"
-                "DATABASE_URL = postgresql://postgres:пароль@db.xxxxx.supabase.co:5432/postgres?sslmode=require"
-            )
+            raise ValueError("❌ DATABASE_URL не установлен в переменных окружения")
         
-        # 🔍 Диагностика строки подключения
-        print(f"🔍 Проверка строки подключения:")
-        print(f"   Хост: {self._extract_host(db_url)}")
-        print(f"   SSL:  {'✅ включён' if 'sslmode=require' in db_url.lower() else '⚠️ отсутствует'}")
+        # 🔍 Диагностика
+        parsed = urlparse(db_url)
+        host = parsed.hostname or "неизвестно"
+        is_internal = "railway.internal" in host
         
-        # 🔧 Автоматическое добавление SSL если отсутствует
-        if 'sslmode=' not in db_url.lower():
-            if '?' in db_url:
-                db_url += '&sslmode=require'
-            else:
-                db_url += '?sslmode=require'
-            print(f"🔧 Добавлен параметр sslmode=require")
+        print(f"🔍 Подключение к БД:")
+        print(f"   Хост: {host}")
+        print(f"   Внутренний: {'✅ да' if is_internal else '❌ нет'}")
         
         try:
-            self.pool = await asyncpg.create_pool(
-                db_url,
-                min_size=1,
-                max_size=5,
-                command_timeout=60,
-                ssl='require'
-            )
+            # 🔧 Для внутренних хостов НЕ используем SSL (ломает подключение)
+            # 🔧 Для публичных хостов используем стандартные настройки
+            if is_internal:
+                # Внутреннее подключение без SSL
+                self.pool = await asyncpg.create_pool(
+                    db_url,
+                    min_size=1,
+                    max_size=5,
+                    command_timeout=60,
+                    ssl=None  # ЯВНО отключаем SSL для внутренних хостов
+                )
+            else:
+                # Публичное подключение с автоматическим SSL
+                self.pool = await asyncpg.create_pool(
+                    db_url,
+                    min_size=1,
+                    max_size=5,
+                    command_timeout=60
+                )
+            
             print(f"✅ Подключение к БД установлено")
+            
         except Exception as e:
             error_msg = str(e).lower()
             
-            if 'network is unreachable' in error_msg or 'cannot assign requested address' in error_msg:
+            if 'name or service not known' in error_msg or 'gaierror' in error_msg:
                 raise ConnectionError(
-                    "❌ Ошибка сети: Не удаётся подключиться к базе данных.\n"
+                    "❌ Ошибка: хост базы данных не найден.\n"
                     "РЕШЕНИЕ:\n"
-                    "1. В Supabase: Settings → Database → Network Restrictions\n"
-                    "2. Добавьте правило: 0.0.0.0/0\n"
-                    "3. Сохраните и перезапустите бота"
+                    "1. Убедитесь, что БД и бот в одном проекте Railway\n"
+                    "2. Используйте ПУБЛИЧНУЮ строку подключения (не *.railway.internal)\n"
+                    "3. Скопируйте Connection URL из вкладки 'Connect' сервиса PostgreSQL"
                 )
-            elif 'password authentication failed' in error_msg:
+            elif 'network is unreachable' in error_msg:
                 raise ConnectionError(
-                    "❌ Ошибка аутентификации: Неверный пароль.\n"
-                    "Проверьте DATABASE_URL — пароль должен быть правильным."
+                    "❌ Ошибка сети. Используйте публичный URL базы данных из вкладки 'Connect'"
                 )
             else:
                 raise ConnectionError(f"❌ Ошибка подключения: {str(e)}")
-    
-    def _extract_host(self, url):
-        try:
-            if '://' in url:
-                url = url.split('://')[1]
-            if '@' in url:
-                url = url.split('@')[1]
-            return url.split(':')[0].split('/')[0]
-        except:
-            return "неизвестно"
     
     async def close(self):
         """Безопасное закрытие соединения"""
@@ -79,7 +73,6 @@ class Database:
     async def create_tables(self):
         """Создание таблиц если не существуют"""
         async with self.pool.acquire() as conn:
-            # Таблица пользователей
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
@@ -94,7 +87,6 @@ class Database:
                 )
             ''')
             
-            # Таблица генераций
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS generations (
                     id SERIAL PRIMARY KEY,
@@ -109,7 +101,6 @@ class Database:
                 )
             ''')
             
-            # Таблица покупок
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS purchases (
                     id SERIAL PRIMARY KEY,
@@ -125,14 +116,12 @@ class Database:
                 )
             ''')
             
-            # Индексы
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_generations_telegram_id ON generations(telegram_id)')
             
             print("✅ Таблицы БД проверены/созданы")
     
-    # ===== ОСНОВНЫЕ МЕТОДЫ (полная реализация) =====
-    
+    # ===== ОСНОВНЫЕ МЕТОДЫ =====
     async def create_user(self, telegram_id, username=None, first_name=None, last_name=None):
         async with self.pool.acquire() as conn:
             await conn.execute('''

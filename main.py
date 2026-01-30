@@ -145,30 +145,9 @@ async def generate_image(message: Message):
         # Возврат кредитов при ошибке
         await db.add_credits(user_id, COST_STANDARD)
 
-# ===== ГЕНЕРАЦИЯ ЧЕРЕЗ REPLICATE =====
 async def generate_with_replicate(prompt: str) -> str:
-    """Генерация изображения через Replicate API"""
-    
-    # Улучшаем промпт для лучшего качества
-    enhanced = f"{prompt}, high quality, detailed, professional, 4k"
-    
-    input_data = {
-        "prompt": enhanced,
-        "aspect_ratio": DEFAULT_ASPECT_RATIO,
-        "output_format": DEFAULT_OUTPUT_FORMAT
-    }
-    
-    # Асинхронный вызов
-    loop = asyncio.get_event_loop()
-    output = await loop.run_in_executor(
-        None,
-        lambda: replicate.run(REPLICATE_MODEL, input=input_data)
-    )
-    
-    if not output:
-        raise Exception("Пустой ответ от модели")
-    
-    return output[0]
+    """ЗАГЛУШКА: возвращает тестовое изображение без вызова API"""
+    return "https://picsum.photos/1024/1024?random=1"
 
 # ===== КОМАНДА /balance =====
 @dp.message(Command("balance"))

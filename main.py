@@ -8,7 +8,7 @@ AI Image Generator Bot — Telegram бот для генерации изобр�
 import asyncio
 import logging
 import replicate
-import os
+import os  # 🔴 ДОБАВЛЕН ИМПОРТ
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -16,6 +16,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties  # 🔴 ДЛЯ ИСПРАВЛЕНИЯ DEPRECATION
 from dotenv import load_dotenv
 
 from config import *
@@ -31,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 # Инициализация
 load_dotenv()
-bot = Bot(token=TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(
+    token=TELEGRAM_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 db = Database()
 
@@ -361,21 +365,46 @@ async def back_to_main(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ===== ЗАПУСК БОТА =====
+# ===== ЗАПУСК БОТА С ОБРАБОТКОЙ ОШИБОК =====
 async def main():
-    """Основная функция запуска"""
-    logger.info("Инициализация базы данных...")
-    await db.connect()
-    await db.create_tables()
-    logger.info("База данных готова")
+    """Основная функция запуска с обработкой ошибок"""
+    # 🔴 ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ПЕРЕД СТАРТОМ
+    required_vars = {
+        "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
+        "REPLICATE_API_KEY": REPLICATE_API_KEY,
+        "DATABASE_URL": os.getenv("DATABASE_URL")
+    }
     
-    logger.info("Запуск бота...")
-    await dp.start_polling(bot)
+    missing = [k for k, v in required_vars.items() if not v]
+    if missing:
+        logger.error(f"❌ Отсутствуют обязательные переменные окружения: {', '.join(missing)}")
+        logger.error("Проверьте настройки в Railway → Variables")
+        return
+    
+    logger.info("✅ Все переменные окружения загружены")
+    
+    try:
+        logger.info("Инициализация базы данных...")
+        await db.connect()
+        await db.create_tables()
+        logger.info("✅ База данных готова")
+        
+        # Установка токена Replicate
+        replicate.default_client.api_token = REPLICATE_API_KEY
+        
+        logger.info("🚀 Запуск бота...")
+        await dp.start_polling(bot)
+        
+    except KeyboardInterrupt:
+        logger.info("🛑 Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
+    finally:
+        # 🔴 БЕЗОПАСНОЕ ЗАКРЫТИЕ: только если соединение было установлено
+        if db.pool:
+            await db.close()
+        else:
+            logger.warning("⚠️ Соединение с БД не было установлено")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен пользователем")
-    finally:
-        asyncio.run(db.close())
+    asyncio.run(main())
